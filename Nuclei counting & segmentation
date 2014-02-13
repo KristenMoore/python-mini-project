@@ -1,0 +1,117 @@
+# http://pythonvision.org/basic-tutorial
+
+import numpy as np
+import scipy
+import pylab
+import pymorph
+import mahotas
+from scipy import ndimage
+
+dna = mahotas.imread('dna.jpeg')
+# pylab.imshow(dna)
+# pylab.show()
+
+# pylab.gray()
+# pylab.show()
+
+# print dna.shape # 1024 Pixels high & 1344 pixels across
+# print dna.dtype # unit8, unsigned 8-bit integer
+# print dna.max() # 252
+# print dna.min() # 0
+
+# pylab.imshow(dna // 2) # all values have been divided by 2. And the display is thte same. 
+# pylab.show()
+
+
+#=====================================================================================
+#    Idea for counting the nuclei: threshold the image and count the number of objects
+#=====================================================================================
+# T = mahotas.thresholding.otsu(dna)
+# pylab.imshow(dna>T)
+# pylab.show()
+
+# Taking advantage of the fact that dna is a numpy array, and using  it in logical operations (dna>T).
+# Image isn't too goo. Contains many small objects.
+# Now we will SMOOTH the image a bit using a Gaussian filter.
+
+dnaf = ndimage.gaussian_filter(dna, 8)
+T = mahotas.thresholding.otsu(dnaf)
+pylab.imshow(dnaf>T)
+pylab.show()
+
+# The function ndimage.gaussian_filter takes an image and the SD of the filter & returns the filtered image.
+# calling ndimage to filter the image, mahotas to compute the threshold & pylab to display it. THEY ALL WORK WITH NUMPY ARRAYS!
+# Result is better, but have some merged nuclei.
+
+# FINAL NUCLEI COUNT
+
+labeled,nr_objects = ndimage.label(dnaf>T)
+print nr_objects # 18 objects in the image
+pylab.imshow(labeled)
+pylab.jet() # resets the colormap to jet if you had greyscale map active
+pylab.show()
+
+#===================================================================================
+#    Segmenting the image
+#===================================================================================
+
+# There were still nuclei glued together - we can do better!
+
+# 1. Smooth the image
+# 2. Find regional maxima
+# 3. Use the regional maxima as seeds for watershed
+
+# Finding the seeds:
+dnaf = ndimage.gaussian_filter(dna, 8)
+rmax = pymorph.regmax(dnaf)
+pylab.imshow(pymorph.overlay(dna, rmax))
+pylab.show()
+
+# pymorph.overlay() returns a colour image with grey level component given by it's first argument with the second argument overlayed as a red channel.
+
+# After a little fiddling around, we decide to try the same idea with a bigger sigma value:
+dnaf = ndimage.gaussian_filter(dna, 16)
+rmax=pymorph.regmax(dnaf)
+pylab.imshow(pymorph.overlay(dna, rmax))
+
+# Can easily count the number of nuclei now
+
+seeds,nr_nuclei=ndimage.label(rmax)
+print nr_nuclei  # now prints 22
+
+# Going to apply watershed to the distance transform of the threshold image
+
+T=mahotas.thresholding.otsu(dnaf)
+dist=ndimage.distance_transform_edt(dnaf>T)
+dist=dist.max()-dist
+dist -= dist.min()
+dist=dist/float(dist.ptp())*255
+dist=dist.astype(np.uint8)
+pylab.imshow(dist)
+pylab.show()
+
+# After contrast stretching the dist image, then call pymorphy.cwatershed to get the final result
+
+nuclei = pymorph.cwatershed(dist, seeds)
+pylab.imshow(nuclei)
+pylab.show()
+
+# Extend this segmentation to the whole plane using generalised Voronoi (each pixel assigned the value of it's nearest nucleus)
+
+whole = mahotas.segmentation.gvoronoi(nuclei)
+pylab.imshow(whole)
+pylab.show()
+
+# Quality control by removing the cells that touch the border
+
+borders=np.zeros(nuclei.shape, np.bool)  # builds an array of zeros, with same shape as nuclei, type np.bool
+borders[0,:]=1
+borders[-1,:1]=1
+borders[:,0]=1
+borders[:,-1]=1  # sets the borders of the array to True (1=True)
+at_border=np.unique(nuclei[borders])   # nuclei[borders] gets the balues that the nuclei array ahs where borders=True, then np.unique returns only the unique values 
+for obj in at_border:
+    whole[whole == obj] =0
+    # iterate over the border objects and everywhere that whole takes that value, we set it to zero.
+pylab.imshow(whole)
+pylab.show()
